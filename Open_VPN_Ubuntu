@@ -1,1 +1,91 @@
+sudo apt-get update
+sudo apt-get install -y openvpn easy-rsa
+
+openvpn --version
+
+make-cadir ~/easy-rsa
+cd ~/easy-rsa
+
+source vars
+./easyrsa init-pki
+./easyrsa build-ca  # Press Enter for defaults, no password for simplicity
+./easyrsa gen-req server nopass
+./easyrsa sign-req server server
+./easyrsa gen-dh
+openvpn --genkey tls-auth ta.key
+
+./easyrsa gen-req client nopass
+./easyrsa sign-req client client
+
+sudo cp ~/easy-rsa/pki/ca.crt /etc/openvpn/
+sudo cp ~/easy-rsa/pki/issued/server.crt /etc/openvpn/
+sudo cp ~/easy-rsa/pki/private/server.key /etc/openvpn/
+sudo cp ~/easy-rsa/pki/dh.pem /etc/openvpn/
+sudo cp ~/easy-rsa/ta.key /etc/openvpn/
+
+sudo nano /etc/openvpn/server.conf
+
+'port 1194
+proto udp
+dev tun
+ca ca.crt
+cert server.crt
+key server.key
+dh dh.pem
+tls-auth ta.key 0
+server 10.8.0.0 255.255.255.0
+push "redirect-gateway def1"
+push "dhcp-option DNS 8.8.8.8"
+keepalive 10 120
+cipher AES-256-CBC
+persist-key
+persist-tun
+status openvpn-status.log
+verb 3'
+
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+
+sudo iptables -t nat -A POSTROUTING -s 172.31.0.0/24 -o ens5 -j MASQUERADE
+sudo ufw allow 1194/udp
+sudo ufw allow OpenSSH
+sudo ufw enable
+
+Edit /etc/ufw/before.rules to add NAT rules before the *filter section:
+
+*nat
+:POSTROUTING ACCEPT [0:0]
+-A POSTROUTING -s 172.31.0.0/8 -o ens5 -j MASQUERADE
+COMMIT
+
+Update /etc/default/ufw to set DEFAULT_FORWARD_POLICY="ACCEPT"
+
+sudo systemctl start openvpn@server
+sudo systemctl enable openvpn@server
+
+client
+dev tun
+proto udp
+remote <instance-public-ip> 1194
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+ca ca.crt
+cert client.crt
+key client.key
+tls-auth ta.key 1
+cipher AES-256-C figured: AES-256-CBC
+remote-cert-tls server
+verb 3
+
+Copy the following files to your client machine (e.g., via SCP):
+
+~/easy-rsa/pki/ca.crt
+~/easy-rsa/pki/issued/client.crt
+~/easy-rsa/pki/private/client.key
+~/easy-rsa/ta.key
+
+enp39s0
+
 
